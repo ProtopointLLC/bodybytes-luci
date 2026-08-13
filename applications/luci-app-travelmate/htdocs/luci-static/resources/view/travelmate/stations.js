@@ -278,7 +278,7 @@ return view.extend({
 		m = new form.Map('wireless');
 		m.chain('travelmate');
 		s = m.section(form.GridSection, 'wifi-iface', null, _('Overview of all configured uplinks for travelmate. \
-			You can edit, remove or prioritize existing uplinks by drag &#38; drop and scan for new ones.<br /> \
+			You can edit, remove or prioritize existing uplinks by drag &#38; drop, or add a new one manually.<br /> \
 			The currently used uplink connection is emphasized in <span style="color:rgb(51, 119, 204);font-weight:bold">blue</span>, \
 			an encrypted VPN uplink connection is emphasized in <span style="color:rgb(68, 170, 68);font-weight:bold">green</span>.'));
 		s.filter = function (section_id) {
@@ -705,14 +705,14 @@ return view.extend({
 		}
 
 		/*
-			scan buttons
+			add-uplink button
 		*/
 		s = m.section(form.GridSection, 'wifi-device');
 		s.anonymous = true;
 		s.addremove = false;
 		s.render = function () {
 			return network.getWifiDevices().then(L.bind(function (radios) {
-				let radio, ifname, btns = [];
+				let radio, btns = [];
 				for (let i = 0; i < radios.length; i++) {
 					radio = radios[i].sid;
 					if (radio) {
@@ -720,179 +720,12 @@ return view.extend({
 							'class': 'cbi-button cbi-button-apply',
 							'style': 'float:none;margin-right:.4em;',
 							'id': radio,
-							'click': ui.createHandlerFn(this, 'handleScan', radio)
-						}, [_('Scan on ' + radio + '...')]))
+							'click': ui.createHandlerFn(this, 'handleAdd', radio, iface, '', '', 'sae-mixed')
+						}, [_('Add Uplink on ' + radio + '...')]))
 					}
 				}
 				return E('div', { 'class': 'left', 'style': 'display:flex; flex-direction:column' }, E('div', { 'class': 'left', 'style': 'padding-top:5px; padding-bottom:5px' }, btns));
 			}, this))
-		};
-
-		/*
-			modal 'scan' dialog
-		*/
-		s.handleScan = function (radio) {
-			poll.stop();
-			let table = E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', { 'class': 'th col-1 middle left' }, _('Strength')),
-					E('th', { 'class': 'th col-1 middle left hide-xs' }, _('Channel')),
-					E('th', { 'class': 'th col-2 middle left' }, _('SSID')),
-					E('th', { 'class': 'th col-2 middle left' }, _('BSSID')),
-					E('th', { 'class': 'th col-3 middle left' }, _('Encryption')),
-					E('th', { 'class': 'th cbi-section-actions right' }, '\xa0')
-				])
-			]);
-			cbi_update_table(table, [], E('em', { class: 'spinning' }, _('Starting wireless scan on \'' + radio + '\'...')));
-
-			let md = ui.showModal(_('Wireless Scan'), [
-				table,
-				E('div', { 'class': 'right' }, [
-					E('button', {
-						'class': 'btn',
-						'style': 'float:none;margin-right:.4em;',
-						'click': ui.hideModal
-					}, _('Dismiss')),
-					E('button', {
-						'class': 'cbi-button cbi-button-positive important',
-						'id': 'scan-btn',
-						'disabled': 'disabled',
-						'click': L.bind(this.handleScan, this, radio)
-					}, _('Repeat Scan'))
-				])
-			]);
-
-			md.style.maxWidth = '90%';
-			md.style.maxHeight = 'none';
-
-			return L.resolveDefault(fs.exec_direct('/etc/init.d/travelmate', ['scan', radio]))
-				.then(L.bind(function () {
-					return L.resolveDefault(fs.read_direct('/var/run/travelmate/travelmate.scan'), '')
-						.then(L.bind(function (res) {
-							let lines, strength, channel, bssid, wpa, cipher, auth, tbl_ssid, ssid, rows = [];
-
-							if (res) {
-								lines = res.split('\n');
-
-								for (let i = 0; i < lines.length; i++) {
-									if (lines[i].match(/^\s*\d+/)) {
-
-										/*
-											result columns
-										*/
-										strength = lines[i].slice(0, 3).trim();
-										channel = lines[i].slice(3, 7).trim();
-										bssid = lines[i].slice(7, 25).trim();
-										wpa = lines[i].slice(25, 37).trim();
-										cipher = lines[i].slice(37, 48).trim();
-										auth = lines[i].slice(48, 59).trim().split(',');
-										ssid = lines[i].slice(59).trim();
-
-										/*
-											SSID preparation
-										*/
-										if (ssid === 'hidden') {
-											tbl_ssid = "<em>hidden</em>";
-										} else {
-											ssid = ssid.replace(/^"(.*)"$/, '$1');
-											tbl_ssid = ssid;
-										}
-
-										/*
-											WPA detection
-										*/
-										let hasWPA1 = wpa.includes("WPA1");
-										let hasWPA2 = wpa.includes("WPA2");
-										let hasWPA3 = wpa.includes("WPA3");
-
-										/*
-											Auth detection
-										*/
-										let hasPSK = auth.some(a => a.includes("PSK"));
-										let hasSAE = auth.some(a => a.includes("SAE"));
-										let has8021x = auth.some(a => a.includes("802.1X"));
-										let hasOWE = auth.includes("OWE");
-										let hasSuiteB = auth.some(a => a.includes("SUITE-B"));
-										let resCipher = resolveCipher(cipher);
-
-										/*
-											encryption classification
-										*/
-										let tbl_encryption = '';
-										let encryption = 'none';
-
-										if (cipher === '-' && wpa === '-') {
-											tbl_encryption = 'Open';
-											encryption = 'none';
-										} else if (hasOWE) {
-											tbl_encryption = `WPA3 OWE (${resCipher})`;
-											encryption = 'owe';
-										} else if (hasSuiteB) {
-											tbl_encryption = `WPA3 Enterprise (${resCipher})`;
-											encryption = 'wpa3';
-										} else if (hasWPA2 && hasWPA3 && hasPSK && !has8021x) {
-											tbl_encryption = `Mixed WPA2/WPA3 PSK (${resCipher})`;
-											encryption = 'sae-mixed';
-										} else if (hasWPA2 && hasWPA3 && has8021x) {
-											tbl_encryption = `Mixed WPA2/WPA3 802.1X (${resCipher})`;
-											encryption = 'wpa3-mixed';
-										} else if (hasWPA3 && hasSAE && !has8021x) {
-											tbl_encryption = `WPA3 PSK (SAE)`;
-											encryption = 'sae';
-										} else if (hasWPA3 && has8021x) {
-											tbl_encryption = `WPA3 802.1X (${resCipher})`;
-											encryption = 'wpa3';
-										} else if (hasWPA1 && hasWPA2 && has8021x) {
-											tbl_encryption = `Mixed WPA/WPA2 802.1X (${resCipher})`;
-											encryption = (resCipher === 'CCMP') ? 'wpa-mixed+ccmp' : 'wpa-mixed+tkip';
-										} else if (hasWPA2 && has8021x) {
-											tbl_encryption = `WPA2 802.1X (${resCipher})`;
-											encryption = (resCipher === 'CCMP' || resCipher === 'GCMP-256') ? 'wpa2+ccmp' : 'wpa2+tkip';
-										} else if (hasWPA1 && has8021x) {
-											tbl_encryption = `WPA 802.1X (${resCipher})`;
-											encryption = (resCipher === 'CCMP') ? 'wpa+ccmp' : 'wpa+tkip';
-										} else if (hasWPA1 && hasWPA2 && hasPSK) {
-											tbl_encryption = `Mixed WPA/WPA2 PSK (${resCipher})`;
-											encryption = (resCipher === 'CCMP') ? 'psk-mixed+ccmp' : 'psk-mixed+tkip';
-										} else if (hasWPA2 && hasPSK) {
-											tbl_encryption = `WPA2 PSK (${resCipher})`;
-											encryption = (resCipher === 'CCMP' || resCipher === 'GCMP-256') ? 'psk2+ccmp' : 'psk2+tkip';
-										} else if (hasWPA1 && hasPSK) {
-											tbl_encryption = `WPA PSK (${resCipher})`;
-											encryption = (resCipher === 'CCMP') ? 'psk+ccmp' : 'psk+tkip';
-										} else {
-											tbl_encryption = 'unknown';
-											encryption = 'none';
-										}
-
-										/*
-											push result row into table
-										*/
-										rows.push([
-											strength,
-											channel,
-											tbl_ssid,
-											bssid,
-											tbl_encryption,
-											E('div', { 'class': 'right' },
-												E('button', {
-													'class': 'cbi-button cbi-button-action',
-													'click': ui.createHandlerFn(this, 'handleAdd', radio, iface, ssid, bssid, encryption)
-												}, _('Add Uplink...'))
-											)
-										]);
-									}
-								}
-							} else {
-								rows.push(['Empty resultset']);
-							}
-
-							cbi_update_table(table, rows);
-							document.getElementById('scan-btn').disabled = false;
-							poll.start();
-						}, this));
-				}, this));
-
 		};
 
 		/*
@@ -1042,7 +875,7 @@ return view.extend({
 			o2.rmempty = true;
 
 			return m2.render().then(L.bind(function (elements) {
-				ui.showModal(_('Add Uplink %q').replace(/%q/, '"%h"'.format(ssid)), [
+				ui.showModal(ssid ? _('Add Uplink %q').replace(/%q/, '"%h"'.format(ssid)) : _('Add Uplink'), [
 					elements,
 					E('div', { 'class': 'right' }, [
 						E('button', {
