@@ -478,7 +478,7 @@ return view.extend({
 
 		o = s.taboption('additional', form.Value, 'trm_minquality', _('Signal Quality Threshold'), _('Minimum signal quality threshold as percent for conditional uplink (dis-) connections.'));
 		o.placeholder = '35';
-		o.datatype = 'range(20,80)';
+		o.datatype = 'range(1,80)';
 		o.rmempty = true;
 
 		o = s.taboption('additional', form.Value, 'trm_maxwait', _('Interface Timeout'), _('How long should travelmate wait for a successful wlan uplink connection.'));
